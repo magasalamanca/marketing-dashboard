@@ -1,0 +1,349 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {"aggregate_last_paid_click.csv.csv":false};
+        var gk_fileData = {"aggregate_last_paid_click.csv.csv":"\"visit_date\",\"utm_source\",\"utm_medium\",\"utm_campaign\",\"visitors_count\",\"total_cost\",\"leads_count\",\"purchases_count\",\"revenue\"\r\n2023-06-01,yandex,cpc,freemium,103,21654,100,25,1654810\r\n2023-06-01,yandex,cpc,prof-frontend,78,57138,73,12,1057000\r\n2023-06-01,yandex,cpc,prof-python,62,33026,61,7,613196\r\n2023-06-01,yandex,cpc,base-python,31,12524,28,7,476021\r\n2023-06-01,vk,cpc,prof-python,71,2028,40,5,355564\r\n2023-06-01,vk,cpc,freemium-frontend,80,3160,43,5,338083\r\n2023-06-01,yandex,cpc,prof-java,49,29490,49,4,284590\r\n2023-06-01,yandex,cpc,base-frontend,40,18061,39,3,268515\r\n2023-06-01,vk,cpc,prof-java,51,3115,23,2,232726\r\n2023-06-01,yandex,cpc,prof-data-analytics,14,10086,14,2,220264\r\n2023-06-01,yandex,cpc,prof-professions-brand,13,4818,13,3,154287\r\n2023-06-20,telegram,cpp,base-java,3,0,1,1,151192\r\n2023-06-01,yandex,cpc,dod-php,4,5964,4,1,150255\r\n2023-06-01,yandex,cpc,base-professions-retarget,4,151,4,1,134100\r\n2023-06-07,vk,social,hexlet-blog,3,0,1,1,84000\r\n"};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Маркетинговый дашборд</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://unpkg.com/papaparse@latest/papaparse.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chrono-node/1.3.11/chrono.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.15.0/Recharts.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; background-color: #f9fafb; }
+    .chart-container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
+    .loading { text-align: center; padding: 50px; font-size: 18px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    // Инициализация React и зависимостей
+    const { useState, useEffect } = React;
+    const { createRoot } = ReactDOM;
+    const {
+      LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
+    } = Recharts;
+
+    // Функция для сокращения чисел
+    const abbreviateNumber = (num) => {
+      if (isNaN(num) || num === null) return '0';
+      if (num >= 1000000) return (num / 1000000).toFixed(1) + ' млн';
+      if (num >= 1000) return (num / 1000).toFixed(1) + ' тыс';
+      return num.toString();
+    };
+
+    // Основной компонент дашборда
+    const Dashboard = () => {
+      const [data, setData] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [dateFilter, setDateFilter] = useState('2023-06-01');
+      const [sourceFilter, setSourceFilter] = useState('');
+      const [mediumFilter, setMediumFilter] = useState('');
+      const [campaignFilter, setCampaignFilter] = useState('');
+
+      // Загрузка и обработка данных CSV
+      useEffect(() => {
+        const csv = loadFileData('aggregate_last_paid_click.csv.csv');
+        Papa.parse(csv, {
+          header: true,
+          skipEmptyLines: true,
+          dynamicTyping: false,
+          transformHeader: (header) => header.trim().replace(/^"|"$/g, ''),
+          transform: (value, header) => {
+            let cleaned = value.trim().replace(/^"|"$/g, '');
+            if (['visitors_count', 'total_cost', 'leads_count', 'purchases_count', 'revenue'].includes(header)) {
+              return parseFloat(cleaned) || 0;
+            }
+            if (header === 'visit_date') {
+              return chrono.parseDate(cleaned) || new Date(cleaned);
+            }
+            return cleaned;
+          },
+          complete: (results) => {
+            const cleanedData = results.data.map(row => ({
+              ...row,
+              visit_date: new Date(row['visit_date']),
+              cpu: row['visitors_count'] > 0 ? row['total_cost'] / row['visitors_count'] : 0,
+              cpl: row['leads_count'] > 0 ? row['total_cost'] / row['leads_count'] : 0,
+              cppu: row['purchases_count'] > 0 ? row['total_cost'] / row['purchases_count'] : 0,
+              roi: row['total_cost'] > 0 ? ((row['revenue'] - row['total_cost']) / row['total_cost'] * 100) : 0
+            }));
+            setData(cleanedData);
+            setLoading(false);
+          },
+          error: (err) => {
+            console.error(err);
+            setLoading(false);
+          }
+        });
+      }, []);
+
+      // Фильтрация данных на основе выбора пользователя
+      const filteredData = data.filter(row =>
+        (!dateFilter || row['visit_date'].toISOString().includes(dateFilter)) &&
+        (!sourceFilter || row['utm_source'] === sourceFilter) &&
+        (!mediumFilter || row['utm_medium'] === mediumFilter) &&
+        (!campaignFilter || row['utm_campaign'] === campaignFilter)
+      );
+
+      // Отображение состояния загрузки
+      if (loading) {
+        return <div className="loading">Загрузка данных...</div>;
+      }
+
+      // Подготовка уникальных опций для фильтров
+      const sources = [...new Set(data.map(row => row['utm_source']))];
+      const mediums = [...new Set(data.map(row => row['utm_medium']))];
+      const campaigns = [...new Set(data.map(row => row['utm_campaign']))];
+
+      return (
+        <div className="container mx-auto">
+          <h1 className="text-3xl font-bold mb-6 text-gray-800">Маркетинговый дашборд</h1>
+          
+          {/* Отображение фильтров */}
+          <div className="mb-6 flex flex-wrap gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Дата</label>
+              <input
+                type="date"
+                value={dateFilter}
+                onChange={(e) => setDateFilter(e.target.value)}
+                className="mt-1 p-2 border rounded"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Источник</label>
+              <select
+                value={sourceFilter}
+                onChange={(e) => setSourceFilter(e.target.value)}
+                className="mt-1 p-2 border rounded"
+              >
+                <option value="">Все</option>
+                {sources.map(source => (
+                  <option key={source} value={source}>{source}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Канал</label>
+              <select
+                value={mediumFilter}
+                onChange={(e) => setMediumFilter(e.target.value)}
+                className="mt-1 p-2 border rounded"
+              >
+                <option value="">Все</option>
+                {mediums.map(medium => (
+                  <option key={medium} value={medium}>{medium}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Кампания</label>
+              <select
+                value={campaignFilter}
+                onChange={(e) => setCampaignFilter(e.target.value)}
+                className="mt-1 p-2 border rounded"
+              >
+                <option value="">Все</option>
+                {campaigns.map(campaign => (
+                  <option key={campaign} value={campaign}>{campaign}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Посетители по времени */}
+          <div className="chart-container">
+            <h2 className="text-xl font-semibold mb-4">Посетители по времени</h2>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={filteredData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="visit_date" tickFormatter={(date) => date.toLocaleDateString('ru-RU')} fontSize={12} />
+                <YAxis fontSize={12} tickFormatter={abbreviateNumber} />
+                <Tooltip formatter={abbreviateNumber} />
+                <Legend />
+                <Line type="monotone" dataKey="visitors_count" stroke="#3b82f6" name="Посетители" />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Посетители по источнику */}
+          <div className="chart-container">
+            <h2 className="text-xl font-semibold mb-4">Посетители по источнику</h2>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={filteredData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="utm_source" fontSize={12} />
+                <YAxis fontSize={12} tickFormatter={abbreviateNumber} />
+                <Tooltip formatter={abbreviateNumber} />
+                <Legend />
+                <Bar dataKey="visitors_count" fill="#3b82f6" name="Посетители" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Лиды по времени */}
+          <div className="chart-container">
+            <h2 className="text-xl font-semibold mb-4">Лиды по времени</h2>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={filteredData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="visit_date" tickFormatter={(date) => date.toLocaleDateString('ru-RU')} fontSize={12} />
+                <YAxis fontSize={12} tickFormatter={abbreviateNumber} />
+                <Tooltip formatter={abbreviateNumber} />
+                <Legend />
+                <Line type="monotone" dataKey="leads_count" stroke="#10b981" name="Лиды" />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Конверсии */}
+          <div className="chart-container">
+            <h2 className="text-xl font-semibold mb-4">Коэффициенты конверсии</h2>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={filteredData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="utm_source" fontSize={12} />
+                <YAxis fontSize={12} unit="%" />
+                <Tooltip formatter={(value) => `${value.toFixed(2)}%`} />
+                <Legend />
+                <Line type="monotone" dataKey={(row) => row.leads_count / row.visitors_count * 100} stroke="#ef4444" name="Конверсия клик-лид (%)" />
+               13                <Line type="monotone" dataKey={(row) => row.purchases_count / row.leads_count * 100} stroke="#8b5cf6" name="Конверсия лид-покупка (%)" />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Расходы по каналам */}
+          <div className="chart-container">
+            <h2 className="text-xl font-semibold mb-4">Расходы по каналам</h2>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={filteredData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="utm_campaign" fontSize={12} />
+                <YAxis fontSize={12} tickFormatter={abbreviateNumber} />
+                <Tooltip formatter={abbreviateNumber} />
+                <Legend />
+                <Bar dataKey="total_cost" fill="#f59e0b" name="Расходы" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* ROI по каналам */}
+          <div className="chart-container">
+            <h2 className="text-xl font-semibold mb-4">ROI по каналам</h2>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={filteredData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="utm_source" fontSize={12} />
+                <YAxis fontSize={12} unit="%" />
+                <Tooltip formatter={(value) => `${value.toFixed(2)}%`} />
+                <Legend />
+                <Bar dataKey="roi" fill="#ec4899" name="ROI (%)" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Сводная таблица */}
+          <div className="chart-container">
+            <h2 className="text-xl font-semibold mb-4">Сводные метрики</h2>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Источник</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Канал</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Кампания</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Посетители</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Расходы</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Лиды</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Покупки</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Доход</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">CPU</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">CPL</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">CPPU</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">ROI (%)</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {filteredData.map((row, index) => (
+                    <tr key={index}>
+                      <td className="px-6 py-4 whitespace-nowrap">{row['utm_source']}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{row['utm_medium']}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{row['utm_campaign']}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{abbreviateNumber(row['visitors_count'])}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{abbreviateNumber(row['total_cost'])}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{abbreviateNumber(row['leads_count'])}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{abbreviateNumber(row['purchases_count'])}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{abbreviateNumber(row['revenue'])}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{row['cpu'].toFixed(2)}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{row['cpl'].toFixed(2)}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{row['cppu'].toFixed(2)}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{row['roi'].toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Интересное наблюдение */}
+          <div className="chart-container">
+            <h2 className="text-xl font-semibold mb-4">Интересное наблюдение</h2>
+            <p className="text-gray-600">
+              Кампания Yandex CPC Freemium от 1 июня 2023 года принесла наибольший доход (1.65 млн) с 103 посетителями и 25 покупками, что указывает на высокую эффективность. Примечательно, что кампания Telegram CPP base-java не потребовала затрат при одной покупке, что делает этот канал потенциально выгодным для дальнейшего изучения.
+            </p>
+          </div>
+        </div>
+      );
+    };
+
+    // Рендеринг дашборда
+    const root = createRoot(document.getElementById('root'));
+    root.render(<Dashboard />);
+  </script>
+</body>
+</html>
